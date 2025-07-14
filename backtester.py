@@ -16,15 +16,33 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import json
-from composer_parser import ComposerStrategy
+from composer_parser.composer_parser import ComposerStrategy
 from typing import Dict, List, Set
 
 # --- Configuration ---
 SYMPHONY_FILE_PATH = 'symphony.json'
 GROUND_TRUTH_FILE_PATH = 'composer-tickers.csv'
-START_DATE = '2011-01-01'  # Extended to earliest available data
-END_DATE = '2024-12-31'    # Extended to latest available data
+#START_DATE = '2011-01-01'  # Extended to earliest available data
+#END_DATE = '2024-12-31'    # Extended to latest available data
+# Backtest period (the actual period we want to test)
+BACKTEST_START = '2024-01-01'
+BACKTEST_END = '2024-12-31'
+
+# Data download period (includes warm-up buffer for indicators)
+# Calculate how much earlier we need to start to have enough data for the largest indicator window
+MAX_INDICATOR_WINDOW = 200  # 200-day MA is the largest window
+WARM_UP_BUFFER = 50  # Extra buffer days
+START_DATE = '2023-01-01'  # Start early enough to have warm-up data for 2024 backtest
+END_DATE = '2024-12-31'
+
+
 INITIAL_CAPITAL = 100000.0
+
+# Trading constraints for more realistic backtesting
+TRANSACTION_COST_PCT = 0.001  # 0.1% per trade (typical for ETFs)
+MIN_TRADE_SIZE = 100.0  # Minimum trade size in dollars
+REBALANCE_FREQUENCY = 1  # Rebalance every N days (1 = daily, 5 = weekly, 21 = monthly)
+SLIPPAGE_PCT = 0.0005  # 0.05% slippage per trade
 
 def get_all_tickers(symphony: List) -> Set[str]:
     """Recursively finds all unique ticker symbols mentioned in the symphony."""
@@ -406,6 +424,13 @@ def run_backtest():
     validation_mismatches = 0
     days_validated = 0
     mismatch_details = []  # <-- Add this to store mismatch info
+    
+    # Track ticker selection frequency
+    ticker_selection_count = {}
+    total_trading_days = 0
+
+    # NEW: Track daily ticker selection and weights
+    daily_selection_log = []
 
     # Get the intersection of available dates across all tickers
     common_dates = None
@@ -416,17 +441,70 @@ def run_backtest():
             common_dates = common_dates.intersection(market_data[symbol].index)
 
     print(f"\nRunning backtest from {common_dates.min().strftime('%Y-%m-%d')} to {common_dates.max().strftime('%Y-%m-%d')}...")
+    print(f"Total trading days available: {len(common_dates)}")
+    
+    # Calculate warm-up period needed for indicators
+    max_window = 0
+    for (indicator, window), tickers in indicator_params.items():
+        max_window = max(max_window, window)
+    
+    print(f"Max indicator window: {max_window} days")
+    
+    # Use the actual backtest period, but ensure we have enough warm-up data for indicators
+    print(f"Data available: {common_dates.min().strftime('%Y-%m-%d')} to {common_dates.max().strftime('%Y-%m-%d')}")
+    
+    # Filter to the actual backtest period
+    backtest_start = pd.Timestamp(BACKTEST_START)
+    backtest_end = pd.Timestamp(BACKTEST_END)
+    
+    # Get the backtest dates (the period we actually want to test)
+    backtest_dates = common_dates[(common_dates >= backtest_start) & (common_dates <= backtest_end)]
+    
+    print(f"✅ Backtest period: {backtest_start.strftime('%Y-%m-%d')} to {backtest_end.strftime('%Y-%m-%d')}")
+    print(f"Total backtest days: {len(backtest_dates)}")
+    
+    # Verify we have enough warm-up data before the backtest period
+    warm_up_start = backtest_start - pd.Timedelta(days=max_window + WARM_UP_BUFFER)
+    warm_up_data_available = common_dates[common_dates < backtest_start]
+    
+    if len(warm_up_data_available) >= max_window:
+        print(f"✅ Sufficient warm-up data available ({len(warm_up_data_available)} days before backtest)")
+    else:
+        print(f"⚠️  Warning: Limited warm-up data. Only {len(warm_up_data_available)} days available, need {max_window}")
+        print(f"   Consider downloading data from an earlier date")
 
     # 5. Backtesting Loop
-    for date in common_dates:
-        # Calculate current portfolio value
+    rebalance_counter = 0
+    initial_backtest_value = None
+    for i, date in enumerate(backtest_dates):
+        # 1. Calculate the current value of the portfolio BEFORE any trades for the day.
+        # This reflects the value at market close, based on holdings from the previous day.
         current_value = portfolio['cash']
         for symbol, shares in holdings.items():
-            current_value += shares * market_data[symbol].asof(date)['Close']
-        
+            # Use the current date's closing price to value existing holdings
+            try:
+                current_value += shares * market_data[symbol].asof(date)['Close']
+            except (KeyError, TypeError):
+                # Handle cases where a stock might not have data on a specific day
+                # For simplicity, we'll skip this holding for the day
+                print(f"⚠️  No data for {symbol} on {date.strftime('%Y-%m-%d')}, skipping from portfolio value")
+                pass
+
+        # 2. Record this pre-trade value for performance tracking.
         portfolio_history.append({'Date': date, 'Value': current_value})
 
-        # Get target portfolio for the day
+        # Record initial value at the start of the backtest period
+        if i == 0:
+            initial_backtest_value = current_value
+
+        # Only rebalance based on frequency
+        rebalance_counter += 1
+        if rebalance_counter < REBALANCE_FREQUENCY:
+            continue
+
+        rebalance_counter = 0
+
+        # 3. Determine the target allocation based on today's closing data.
         try:
             target_portfolio = strategy.get_target_portfolio(date)
         except ValueError as e:
@@ -436,9 +514,44 @@ def run_backtest():
             print(f"ERROR {date.strftime('%Y-%m-%d')}: Unexpected error: {e}")
             continue
 
-        # Debug: Print target portfolio for first few days
+        # Debug: Print target portfolio for first few days and track coverage
         if len(portfolio_history) < 5:
             print(f"DEBUG {date.strftime('%Y-%m-%d')}: Target portfolio = {target_portfolio}")
+        
+        # Track ticker selection coverage
+        if target_portfolio:
+            selected_tickers = list(target_portfolio.keys())
+            # NEW: Log the daily selection
+            daily_selection_log.append({
+                'Date': date.strftime('%Y-%m-%d'),
+                **{ticker: target_portfolio[ticker] for ticker in selected_tickers}
+            })
+            print(f"\U0001F4CA {date.strftime('%Y-%m-%d')}: Selected tickers = {selected_tickers} (weights: {[f'{w:.2f}' for w in target_portfolio.values()]})")
+            
+            # Debug indicator values for key tickers on first few days
+            if total_trading_days < 5:
+                print(f"   📈 Indicator values on {date.strftime('%Y-%m-%d')}:")
+                for ticker in ['SPY', 'TQQQ', 'SQQQ']:
+                    if ticker in market_data:
+                        try:
+                            rsi = market_data[ticker].loc[date, 'RSI'] if 'RSI' in market_data[ticker].columns else 'N/A'
+                            current_price = market_data[ticker].loc[date, 'current_price']
+                            if ticker == 'SPY' and 'MA200' in market_data[ticker].columns:
+                                ma200 = market_data[ticker].loc[date, 'MA200']
+                                print(f"      {ticker}: Price=${current_price:.2f}, RSI={rsi:.1f}, MA200=${ma200:.2f}")
+                            elif ticker == 'TQQQ' and 'MA20' in market_data[ticker].columns:
+                                ma20 = market_data[ticker].loc[date, 'MA20']
+                                print(f"      {ticker}: Price=${current_price:.2f}, RSI={rsi:.1f}, MA20=${ma20:.2f}")
+                            else:
+                                print(f"      {ticker}: Price=${current_price:.2f}, RSI={rsi:.1f}")
+                        except (KeyError, IndexError):
+                            print(f"      {ticker}: Data not available")
+                print()
+            
+            # Count ticker selections
+            total_trading_days += 1
+            for ticker in selected_tickers:
+                ticker_selection_count[ticker] = ticker_selection_count.get(ticker, 0) + 1
 
         # Validation Block
         if not ground_truth_df.empty:
@@ -491,16 +604,27 @@ def run_backtest():
         else:
             print("⚠️  Ground truth DataFrame is empty")
 
-        # Rebalance portfolio
+        # 4. Execute trades to rebalance the portfolio.
+        # Note: All calculations for trades use the 'current_value' from Step 1.
+
         # First, sell positions that are no longer in the target portfolio
         assets_to_sell = set(holdings.keys()) - set(target_portfolio.keys())
         for symbol in list(assets_to_sell):
             price = market_data[symbol].asof(date)['Close']
-            portfolio['cash'] += holdings[symbol] * price
-            print(f"{date.strftime('%Y-%m-%d')} - SELL: {holdings[symbol]} shares of {symbol} at ${price:.2f}")
+            # Apply slippage to sell price
+            sell_price = price * (1 - SLIPPAGE_PCT)
+            trade_value = holdings[symbol] * sell_price
+            
+            if trade_value >= MIN_TRADE_SIZE or i == 0:
+                # Apply transaction costs
+                transaction_cost = trade_value * TRANSACTION_COST_PCT
+                net_proceeds = trade_value - transaction_cost
+                portfolio['cash'] += net_proceeds
+                print(f"{date.strftime('%Y-%m-%d')} - SELL: {holdings[symbol]:.2f} shares of {symbol} at ${sell_price:.2f} (net: ${net_proceeds:.2f})")
             del holdings[symbol]
 
         # Second, adjust weights for all target assets
+        # KEY CHANGE: Target value is based on the pre-trade portfolio value
         for symbol, target_weight in target_portfolio.items():
             target_value = current_value * target_weight
             price = market_data[symbol].asof(date)['Close']
@@ -509,18 +633,90 @@ def run_backtest():
             current_shares = holdings.get(symbol, 0)
             shares_to_trade = target_shares - current_shares
 
+            # Debug first day trading
+            if i == 0:
+                print(f"[DEBUG] Trading logic for {symbol}:")
+                print(f"  Target weight: {target_weight}")
+                print(f"  Pre-trade current value: ${current_value:.2f}")
+                print(f"  Target value: ${target_value:.2f}")
+                print(f"  Price: ${price:.2f}")
+                print(f"  Target shares: {target_shares:.2f}")
+                print(f"  Current shares: {current_shares}")
+                print(f"  Shares to trade: {shares_to_trade:.2f}")
+                print(f"  Trade value: ${abs(shares_to_trade * price):.2f}")
+                print(f"  MIN_TRADE_SIZE: ${MIN_TRADE_SIZE:.2f}")
+                print(f"  Cash available: ${portfolio['cash']:.2f}")
+
+            # Always allow trades on the first rebalance, regardless of MIN_TRADE_SIZE
+            if abs(shares_to_trade * price) < MIN_TRADE_SIZE and i != 0:
+                continue  # Skip trades below minimum size
+
             if shares_to_trade > 0: # Buy
-                cost = shares_to_trade * price
-                if portfolio['cash'] >= cost:
-                    portfolio['cash'] -= cost
-                    holdings[symbol] = holdings.get(symbol, 0) + shares_to_trade
-                    print(f"{date.strftime('%Y-%m-%d')} - BUY: {shares_to_trade:.2f} shares of {symbol} at ${price:.2f}")
+                # Apply slippage to buy price
+                buy_price = price * (1 + SLIPPAGE_PCT)
+                # Calculate max shares affordable given slippage and transaction cost
+                max_affordable_shares = portfolio['cash'] / (buy_price * (1 + TRANSACTION_COST_PCT))
+                shares_to_buy = min(shares_to_trade, max_affordable_shares)
+                gross_cost = shares_to_buy * buy_price
+                transaction_cost = gross_cost * TRANSACTION_COST_PCT
+                total_cost = gross_cost + transaction_cost
+                
+                # Debug buy logic
+                if i == 0:
+                    print(f"[DEBUG] Buy logic for {symbol}:")
+                    print(f"  shares_to_trade: {shares_to_trade:.2f}")
+                    print(f"  buy_price: ${buy_price:.2f}")
+                    print(f"  max_affordable_shares: {max_affordable_shares:.2f}")
+                    print(f"  shares_to_buy: {shares_to_buy:.2f}")
+                    print(f"  gross_cost: ${gross_cost:.2f}")
+                    print(f"  transaction_cost: ${transaction_cost:.2f}")
+                    print(f"  total_cost: ${total_cost:.2f}")
+                    print(f"  portfolio['cash']: ${portfolio['cash']:.2f}")
+                    print(f"  shares_to_buy > 0: {shares_to_buy > 0}")
+                    print(f"  portfolio['cash'] >= total_cost: {portfolio['cash'] >= total_cost}")
+                    print(f"  Buy condition: {shares_to_buy > 0 and portfolio['cash'] >= total_cost}")
+                
+                if shares_to_buy > 0 and portfolio['cash'] >= total_cost:
+                    portfolio['cash'] -= total_cost
+                    holdings[symbol] = holdings.get(symbol, 0) + shares_to_buy
+                    print(f"{date.strftime('%Y-%m-%d')} - BUY: {shares_to_buy:.2f} shares of {symbol} at ${buy_price:.2f} (total: ${total_cost:.2f})")
+                elif i == 0:
+                    print(f"[DEBUG] Buy failed for {symbol} on first day!")
             elif shares_to_trade < 0: # Sell
                 shares_to_sell = abs(shares_to_trade)
-                proceeds = shares_to_sell * price
-                portfolio['cash'] += proceeds
+                # Apply slippage to sell price
+                sell_price = price * (1 - SLIPPAGE_PCT)
+                gross_proceeds = shares_to_sell * sell_price
+                transaction_cost = gross_proceeds * TRANSACTION_COST_PCT
+                net_proceeds = gross_proceeds - transaction_cost
+                
+                portfolio['cash'] += net_proceeds
                 holdings[symbol] -= shares_to_sell
-                print(f"{date.strftime('%Y-%m-%d')} - SELL: {shares_to_sell:.2f} shares of {symbol} at ${price:.2f}")
+                print(f"{date.strftime('%Y-%m-%d')} - SELL: {shares_to_sell:.2f} shares of {symbol} at ${sell_price:.2f} (net: ${net_proceeds:.2f})")
+
+        # Debug: Print holdings and cash after the first day
+        if i == 0:
+            print(f"[DEBUG] Holdings after first rebalance: {holdings}")
+            print(f"[DEBUG] Cash after first rebalance: {portfolio['cash']}")
+
+    # Calculate final portfolio value at the end of the backtest
+    # The last recorded value in portfolio_history will be for the second-to-last day
+    # To get the true final value, perform one last calculation for the final day
+    final_date = backtest_dates[-1]
+    final_value = portfolio['cash']
+    for symbol, shares in holdings.items():
+        final_value += shares * market_data[symbol].asof(final_date)['Close']
+    
+    print(f"\n[DEBUG] Final portfolio calculation:")
+    print(f"  Final date: {final_date.strftime('%Y-%m-%d')}")
+    print(f"  Cash: ${portfolio['cash']:.2f}")
+    print(f"  Holdings: {holdings}")
+    for symbol, shares in holdings.items():
+        final_price = market_data[symbol].asof(final_date)['Close']
+        holding_value = shares * final_price
+        print(f"    {symbol}: {shares:.2f} shares @ ${final_price:.2f} = ${holding_value:.2f}")
+    print(f"  Final portfolio value: ${final_value:.2f}")
+    print(f"  Initial backtest value: ${initial_backtest_value:.2f}")
 
     # 6. Generate Validation Report
     if not ground_truth_df.empty and days_validated > 0:
@@ -544,11 +740,17 @@ def run_backtest():
     history_df = pd.DataFrame(portfolio_history)
     history_df.set_index('Date', inplace=True)
     
-    print("\n--- Backtest Results ---")
-    print(f"Initial Portfolio Value: ${INITIAL_CAPITAL:,.2f}")
-    print(f"Final Portfolio Value:   ${history_df['Value'].iloc[-1]:,.2f}")
+    print("\n--- Backtest Results (with Realistic Constraints) ---")
+    print(f"Trading Constraints Applied:")
+    print(f"  - Transaction Costs: {TRANSACTION_COST_PCT*100:.1f}% per trade")
+    print(f"  - Slippage: {SLIPPAGE_PCT*100:.3f}% per trade")
+    print(f"  - Minimum Trade Size: ${MIN_TRADE_SIZE:.0f}")
+    print(f"  - Rebalance Frequency: Every {REBALANCE_FREQUENCY} days")
+    print()
+    print(f"Initial Portfolio Value: ${initial_backtest_value:,.2f}")
+    print(f"Final Portfolio Value:   ${final_value:,.2f}")
     
-    total_return = (history_df['Value'].iloc[-1] / INITIAL_CAPITAL - 1) * 100
+    total_return = (final_value / initial_backtest_value - 1) * 100
     print(f"Total Return:            {total_return:.2f}%")
 
     # Simple Sharpe Ratio (assuming risk-free rate is 0)
@@ -564,6 +766,53 @@ def run_backtest():
     drawdown = (history_df['Value'] - peak) / peak
     max_drawdown = drawdown.min() * 100
     print(f"Maximum Drawdown:        {max_drawdown:.2f}%")
+    
+    # Print ticker selection coverage
+    print(f"\n--- Ticker Selection Coverage ---")
+    print(f"Total Trading Days: {total_trading_days}")
+    print(f"Ticker Selection Frequency:")
+    for ticker, count in sorted(ticker_selection_count.items(), key=lambda x: x[1], reverse=True):
+        percentage = (count / total_trading_days) * 100
+        print(f"  {ticker}: {count} days ({percentage:.1f}%)")
+
+    # NEW: Print daily ticker selection log (first 10 days for brevity)
+    print("\n--- Daily Ticker Selection (first 10 days) ---")
+    for row in daily_selection_log[:10]:
+        print(row)
+    if len(daily_selection_log) > 10:
+        print(f"... ({len(daily_selection_log)-10} more days not shown)")
+
+    # Optionally, save to CSV for full analysis
+    try:
+        import csv
+        with open('daily_ticker_selection.csv', 'w', newline='') as csvfile:
+            fieldnames = ['Date'] + sorted({k for d in daily_selection_log for k in d if k != 'Date'})
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in daily_selection_log:
+                writer.writerow(row)
+        print("\nDaily ticker selection log saved to daily_ticker_selection.csv")
+    except Exception as e:
+        print(f"Could not save daily ticker selection log: {e}")
+
+    # --- TQQQ Buy-and-Hold Diagnostic ---
+    print("\n--- TQQQ Buy-and-Hold Diagnostic (2024) ---")
+    tqqq_df = market_data.get('TQQQ')
+    if tqqq_df is not None:
+        tqqq_2024 = tqqq_df[(tqqq_df.index >= pd.Timestamp('2024-01-01')) & (tqqq_df.index <= pd.Timestamp('2024-12-31'))]
+        if not tqqq_2024.empty:
+            first_date = tqqq_2024.index[0]
+            last_date = tqqq_2024.index[-1]
+            first_close = tqqq_2024.iloc[0]['Close']
+            last_close = tqqq_2024.iloc[-1]['Close']
+            tqqq_return = (last_close / first_close - 1) * 100
+            print(f"First trading day: {first_date.strftime('%Y-%m-%d')}, Close: ${first_close:.2f}")
+            print(f"Last trading day:  {last_date.strftime('%Y-%m-%d')}, Close: ${last_close:.2f}")
+            print(f"TQQQ Buy-and-Hold Return (2024): {tqqq_return:.2f}%")
+        else:
+            print("No TQQQ data for 2024.")
+    else:
+        print("No TQQQ data available in market_data.")
 
 
 if __name__ == '__main__':

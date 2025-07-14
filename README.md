@@ -1,6 +1,39 @@
 # Composer Parser
 
+**⚠️ WORK IN PROGRESS - EXPECT BUGS ⚠️**
+
 A Python backtesting application for Composer.trade strategies that parses symphony JSON files, downloads historical market data, calculates technical indicators, and validates parser accuracy against ground truth data.
+
+## ⚠️ Important Disclaimers
+
+- **This is a work in progress** - Expect bugs, incomplete features, and breaking changes
+- **Limited indicator support** - Only RSI, Moving Average, and Current Price are currently implemented
+- **Experimental code** - Not suitable for production trading
+- **No warranty** - Use at your own risk
+- **Educational purposes** - Primarily for learning and research
+- **Tested strategy only** - Currently validated against one specific symphony (see [symphony.json](symphony.json))
+- **Original source** - Strategy sourced from [Composer.trade](https://app.composer.trade/symphony/tZA9DlWahdsFdA4ROkq6/details)
+
+## 🚨 Legal Disclaimers & Liability
+
+### No Warranty
+**THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.**
+
+### No Liability
+**IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.**
+
+### User Responsibility
+- **You are solely responsible** for any decisions made using this software
+- **No financial advice** - This software does not provide investment advice
+- **Test thoroughly** - Always test with small amounts before any real trading
+- **Understand the risks** - Trading involves substantial risk of loss
+- **Use at your own risk** - The authors accept no responsibility for financial losses
+- **Code is experimental** - May contain bugs that could cause incorrect results
+- **No guarantee of accuracy** - Results may be wrong or misleading
+- **Not for production use** - This is research/educational software only
+
+### Financial Disclaimer
+**This software is for educational and research purposes only. It is not intended to provide financial advice or recommendations. Any trading decisions made using this software are made at your own risk. Past performance does not guarantee future results. You should consult with qualified financial professionals before making any investment decisions.**
 
 ## Overview
 
@@ -24,10 +57,12 @@ This application allows you to:
 - **`group`** - Groups multiple assets together
 - **`filter`** - Selects top/bottom N assets based on indicator ranking
 
-#### Technical Indicators
+#### Technical Indicators (Limited Support)
 - **RSI** (Relative Strength Index) - with configurable window
 - **Moving Average** - Simple Moving Average with configurable window
 - **Current Price** - Real-time price data
+
+**⚠️ Note:** Only these three indicators are currently implemented. Additional indicators (MACD, Bollinger Bands, Stochastic, etc.) are planned but not yet available.
 
 #### Data Management
 - **Automatic ticker extraction** from symphony JSON
@@ -42,6 +77,8 @@ This application allows you to:
 - **Accuracy validation** against ground truth data
 
 ## Installation
+
+**⚠️ By installing and using this software, you acknowledge that you understand the risks and accept full responsibility for any consequences.**
 
 1. **Clone the repository:**
    ```bash
@@ -62,6 +99,8 @@ This application allows you to:
 
 ## Usage
 
+**⚠️ WARNING: Use this software at your own risk. The authors accept no liability for any financial losses or damages resulting from the use of this code.**
+
 ### Basic Backtest
 
 1. **Prepare your symphony JSON file** (see `symphony.json` for example)
@@ -70,6 +109,8 @@ This application allows you to:
    ```bash
    python3 backtester.py
    ```
+
+**⚠️ Important:** Always test with small amounts and understand that this experimental software may produce incorrect results. Never rely solely on this software for trading decisions.
 
 ### Configuration
 
@@ -132,19 +173,42 @@ The symphony JSON follows Composer.trade's Lisp-like syntax converted to JSON:
 | Moving Average | `["moving-average-price", "TICKER", {":window": 200}]` | Simple Moving Average |
 | Current Price | `["current-price", "TICKER"]` | Current market price |
 
-## Current Performance
+## Current Performance (Experimental)
 
-- **Parser Accuracy:** 100% against ground truth data
-- **Supported Indicators:** RSI, Moving Average, Current Price
+- **Parser Accuracy:** 100% against the tested symphony strategy
+- **Supported Indicators:** RSI, Moving Average, Current Price (limited set)
 - **Supported Operators:** if, weight-equal, weight-specified, asset, group, filter
 - **Data Sources:** yfinance for historical data
 - **Validation:** CSV-based ground truth comparison
+- **Tested Strategy:** [symphony.json](symphony.json) - "TQQQ For The Long Term | reddit version" (sourced from [Composer.trade](https://app.composer.trade/symphony/tZA9DlWahdsFdA4ROkq6/details))
+
+**⚠️ Important:** The 100% accuracy is achieved only for the specific symphony strategy provided. Other strategies may not work correctly due to limited indicator support and potential bugs.
+
+## Known Limitations & Bugs
+
+### 🐛 Current Issues
+- **Limited indicator support** - Only 3 indicators implemented (RSI, MA, Current Price)
+- **Single strategy tested** - Only validated against [symphony.json](symphony.json)
+- **No error handling** - Many edge cases not handled gracefully
+- **Memory usage** - Large datasets may cause memory issues
+- **Data quality** - No validation of downloaded market data
+- **Performance** - Not optimized for large-scale backtesting
+
+### ⚠️ What Doesn't Work
+- Strategies using unsupported indicators (MACD, Bollinger Bands, etc.)
+- Complex nested filter operations
+- Dynamic weight calculations
+- Real-time data feeds
+- Multi-timeframe analysis
+- Risk management features
 
 ## Future Improvements Needed
 
 ### 🔴 High Priority
 
-#### Additional Technical Indicators
+#### Additional Technical Indicators (CRITICAL)
+**⚠️ This is the most important limitation - only 3 indicators are currently supported!**
+
 - **MACD** (Moving Average Convergence Divergence)
   - Signal line, histogram, fast/slow periods
   - Example: `["macd", "TICKER", {":fast": 12, ":slow": 26, ":signal": 9}]`
@@ -158,6 +222,10 @@ The symphony JSON follows Composer.trade's Lisp-like syntax converted to JSON:
   - Volume-weighted average price (VWAP)
   - On-balance volume (OBV)
   - Example: `["vwap", "TICKER"]`
+- **Additional Price Indicators**
+  - Exponential Moving Average (EMA)
+  - Weighted Moving Average (WMA)
+  - Price channels and envelopes
 
 #### Enhanced Parser Operators
 - **`weight-specified` improvements**
@@ -252,14 +320,6 @@ The symphony JSON follows Composer.trade's Lisp-like syntax converted to JSON:
   - Kubernetes orchestration
   - Auto-scaling capabilities
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Implement your changes
-4. Add tests for new functionality
-5. Submit a pull request
-
 ## Testing
 
 Run the backtest to validate functionality:
@@ -279,12 +339,86 @@ Expected output should show:
 - **pandas-ta** - Technical analysis indicators
 - **numpy** - Numerical computations
 
+## Contributing
+
+**⚠️ This is an experimental project - contributions are welcome but please understand this is a work in progress!**
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on how to submit pull requests, report bugs, and suggest features.
+
+### 🎯 Priority Areas for Contributors
+1. **Expand indicator support** - This is the most critical need
+2. **Add error handling** - Make the parser more robust
+3. **Test with different strategies** - Validate against more symphony files
+4. **Performance optimization** - Improve memory usage and speed
+5. **Documentation** - Help improve docs and examples
+
+### Development Setup
+
+1. **Fork and clone the repository:**
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/composer-parser.git
+   cd composer-parser
+   ```
+
+2. **Set up development environment:**
+   ```bash
+   make dev-setup
+   ```
+
+3. **Run tests:**
+   ```bash
+   make test
+   ```
+
+4. **Check code quality:**
+   ```bash
+   make check
+   ```
+
+### Code Quality
+
+This project uses several tools to maintain code quality:
+
+- **Black** - Code formatting
+- **Flake8** - Linting
+- **MyPy** - Type checking
+- **Pytest** - Testing
+- **Pre-commit** - Git hooks
+
+Run `make help` to see all available commands.
+
+## Security
+
+Please report security vulnerabilities to [INSERT SECURITY EMAIL]. See our [Security Policy](SECURITY.md) for more details.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-- Composer.trade for the strategy format
-- Yahoo Finance for market data
-- pandas-ta for technical indicators 
+- **Composer.trade** - For the innovative strategy platform and the [original symphony strategy](https://app.composer.trade/symphony/tZA9DlWahdsFdA4ROkq6/details)
+- **yfinance** - For reliable market data
+- **pandas-ta** - For technical indicators
+- **The open source community** - For inspiration and tools
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes.
+
+---
+
+## 🚨 Final Disclaimer
+
+**By using this software, you acknowledge and agree that:**
+
+1. **This is experimental research software** - not production-ready
+2. **You use it entirely at your own risk** - no liability accepted
+3. **You are responsible for all consequences** - financial or otherwise
+4. **No guarantees of accuracy** - results may be wrong
+5. **Not financial advice** - consult professionals for investment decisions
+6. **Test thoroughly** - never rely on untested software for real trading
+7. **Understand the code** - don't use what you don't understand
+8. **Use responsibly** - this is for education and research only
+
+**The authors and contributors to this project accept no responsibility for any losses, damages, or consequences resulting from the use of this software. You are solely responsible for your own actions and decisions.** 
