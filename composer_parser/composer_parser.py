@@ -6,6 +6,8 @@ JSON format. It translates the LISP-like DSL into an executable trading logic.
 """
 import pandas as pd
 from typing import Dict, List, Any, Union
+import logging
+logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
 class ComposerStrategy:
     """
@@ -57,28 +59,32 @@ class ComposerStrategy:
     def _get_indicator_value(self, symbol: str, indicator_type: str, indicator_params: dict) -> float:
         """
         Gets the indicator value for a specific symbol and indicator type.
+
+        Args:
+            symbol (str): The ticker symbol.
+            indicator_type (str): The type of indicator (e.g., 'rsi', 'moving-average-price').
+            indicator_params (dict): Parameters for the indicator (e.g., window size).
+        Returns:
+            float: The indicator value, or None if not available.
         """
         try:
             data = self._get_data_for_date(symbol, self.evaluation_date)
             
             if indicator_type == 'rsi':
-                # RSI is stored as 'RSI_{window}' in the DataFrame
-                window = indicator_params.get(':window', 10)  # default to 10
+                window = int(indicator_params.get(':window', 10))  # default to 10
                 rsi_col = f'RSI_{window}'
                 if rsi_col in data:
                     return data[rsi_col]
                 else:
                     return None
             elif indicator_type == 'moving-average-price':
-                # Moving average is stored as 'MA_{window}' in the DataFrame
-                window = indicator_params.get(':window', 20)  # default to 20
+                window = int(indicator_params.get(':window', 20))  # default to 20
                 ma_col = f'MA_{window}'
                 if ma_col in data:
                     return data[ma_col]
                 else:
                     return None
             elif indicator_type == 'current-price':
-                # Current price is stored as 'current_price' in the DataFrame
                 if 'current_price' in data:
                     return data['current_price']
                 else:
@@ -91,7 +97,11 @@ class ComposerStrategy:
     def _resolve_value(self, value_expression: Union[List, str, int, float]) -> float:
         """
         Resolves an expression to a numeric value (e.g., gets RSI or a price).
-        This is a key part of evaluating conditions.
+
+        Args:
+            value_expression (Union[List, str, int, float]): The value expression to resolve.
+        Returns:
+            float: The resolved numeric value.
         """
         if not isinstance(value_expression, list):
             return float(value_expression)
@@ -106,19 +116,16 @@ class ComposerStrategy:
             elif operator == 'moving-average-price':
                 symbol = value_expression[1]
                 params = value_expression[2]
-                # Handle params as either dict or list
                 if isinstance(params, dict):
-                    window = params.get(':window', 20)  # default to 20
+                    window = int(params.get(':window', 20))  # default to 20
                 elif isinstance(params, list):
-                    # Handle [":window", value] pattern
                     window = 20  # default
                     for i in range(len(params) - 1):
                         if params[i] == ':window':
-                            window = params[i + 1]
+                            window = int(params[i + 1])
                             break
                 else:
                     window = 20  # default
-                    
                 ma_column = f'MA_{window}'
                 if ma_column not in self.market_data[symbol].columns:
                      raise ValueError(f"Indicator '{ma_column}' not found for {symbol}. Please calculate it first.")
@@ -127,19 +134,16 @@ class ComposerStrategy:
             elif operator == 'rsi':
                 symbol = value_expression[1]
                 params = value_expression[2]
-                # Handle params as either dict or list
                 if isinstance(params, dict):
-                    window = params.get(':window', 10)  # default to 10
+                    window = int(params.get(':window', 10))  # default to 10
                 elif isinstance(params, list):
-                    # Handle [":window", value] pattern
                     window = 10  # default
                     for i in range(len(params) - 1):
                         if params[i] == ':window':
-                            window = params[i + 1]
+                            window = int(params[i + 1])
                             break
                 else:
                     window = 10  # default
-                    
                 rsi_column = f'RSI_{window}'
                 if rsi_column not in self.market_data[symbol].columns:
                     raise ValueError(f"Indicator '{rsi_column}' not found for {symbol}. Please calculate it first.")

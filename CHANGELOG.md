@@ -6,12 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
-### Added
-- Initial open source release preparation
-- Comprehensive documentation
-- Contributing guidelines
-- Code of conduct
+### Removed
+- Deprecated `backtester.py` and its associated test module `tests/test_backtester.py`.
+### Changed
+- Refactored internal data handling and indicator calculation to be solely managed by `SymphonyScanner` and exposed via `ComposerAPI`.
+- Updated build system configurations (`Makefile`, `pyproject.toml`, `setup.py`, `.github/workflows/ci.yml`) to remove references to `backtester.py`.
 
 ## [1.0.0] - 2024-12-20
 
@@ -23,10 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Automatic ticker extraction from strategy definitions
 
 - **Backtesting System**
-  - Realistic trading simulation with buy/sell orders
-  - Portfolio tracking and performance metrics
-  - Ground truth validation against CSV data
-  - Extended backtest period (2011-2024) with 48,883x return
+  - *Functionality absorbed into core API for deeper integration. Standalone backtester.py removed in favor of ComposerAPI and SymphonyScanner.*
 
 - **Data Management**
   - Historical market data download via yfinance

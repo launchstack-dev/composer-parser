@@ -31,25 +31,27 @@ class ComposerAPI:
         self._market_data = None
     
     def load_strategy(self, start_date: Optional[str] = None, 
-                     end_date: Optional[str] = None) -> Dict:
+                     end_date: Optional[str] = None,
+                     market_data: Optional[Dict[str, pd.DataFrame]] = None) -> Dict:
         """
         Load and prepare the trading strategy with market data.
         
         Args:
             start_date (str, optional): Start date for data download
             end_date (str, optional): End date for data download
-            
+            market_data (Optional[Dict[str, pd.DataFrame]]): Preloaded market data to use instead of downloading.
         Returns:
             Dict: Strategy information including tickers and indicators
         """
         # Scan symphony to get tickers and indicators
         tickers, indicators = self.scanner.scan_symphony()
         
-        # Download market data
-        self._market_data = self.scanner.download_market_data(start_date, end_date)
-        
-        # Calculate indicators
-        self.scanner.calculate_all_indicators()
+        if market_data is not None:
+            self._market_data = market_data
+            self.scanner.market_data = market_data
+        else:
+            self._market_data = self.scanner.download_market_data(start_date, end_date)
+            self.scanner.calculate_all_indicators()
         
         # Create strategy evaluator
         self._strategy = self.scanner.create_strategy_evaluator()

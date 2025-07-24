@@ -308,3 +308,26 @@ This package was developed to provide a robust, production-ready solution for pa
 - **Test thoroughly** - Always test with small amounts before any real trading
 - **Understand the risks** - Trading involves substantial risk of loss
 - **Use at your own risk** - The authors accept no responsibility for financial losses 
+
+## ❌ Deprecated: backtester.py
+
+The old `backtester.py` script is **deprecated** and no longer compatible with the new package structure and API. All backtesting, strategy evaluation, and data analysis should now be performed using the new `ComposerAPI` and `SymphonyScanner` classes.
+
+### Migration Example
+
+**Old (Deprecated):**
+```python
+# backtester.py (no longer supported)
+strategy = ComposerStrategy(symphony_json, market_data)
+```
+
+**New (Recommended):**
+```python
+from composer_parser import ComposerAPI
+
+api = ComposerAPI('symphony.json')
+api.load_strategy()
+selections = api.get_selections_for_period('2024-01-01', '2024-12-31')
+```
+
+The new API is more robust, easier to use, and validated for accuracy. Please update any scripts or integrations to use the new API. 

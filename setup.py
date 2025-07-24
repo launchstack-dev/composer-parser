@@ -81,7 +81,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "composer-backtest=backtester:run_backtest",
+            # "composer-backtest=backtester:run_backtest",  # Removed deprecated entry point
         ],
     },
     include_package_data=True,

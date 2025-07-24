@@ -6,6 +6,11 @@ import pytest
 import pandas as pd
 from unittest.mock import Mock, patch
 from composer_parser.composer_parser import ComposerStrategy
+import os
+import numpy as np
+import logging
+import pytest
+from composer_parser.symphony_scanner import SymphonyScanner
 
 
 class TestComposerStrategy:
@@ -13,18 +18,18 @@ class TestComposerStrategy:
 
     def setup_method(self):
         """Set up test fixtures."""
-        # Create sample market data
+        # Create sample market data with correct indicator column names
         self.sample_data = {
             'SPY': pd.DataFrame({
                 'Close': [100, 101, 102, 103, 104],
-                'RSI': [50, 51, 52, 53, 54],
-                'MA200': [98, 99, 100, 101, 102],
+                'RSI_10': [50, 51, 52, 53, 54],
+                'MA_200': [98, 99, 100, 101, 102],
                 'current_price': [100, 101, 102, 103, 104]
             }, index=pd.date_range('2024-01-01', periods=5, freq='D')),
             'TQQQ': pd.DataFrame({
                 'Close': [50, 51, 52, 53, 54],
-                'RSI': [45, 46, 47, 48, 49],
-                'MA20': [49, 50, 51, 52, 53],
+                'RSI_10': [45, 46, 47, 48, 49],
+                'MA_20': [49, 50, 51, 52, 53],
                 'current_price': [50, 51, 52, 53, 54]
             }, index=pd.date_range('2024-01-01', periods=5, freq='D'))
         }
@@ -199,6 +204,49 @@ class TestParserEdgeCases:
         # This should not raise an exception but handle gracefully
         strategy = ComposerStrategy(malformed_symphony, {})
         assert strategy is not None
+
+
+def test_full_ticker_selection_matches_ground_truth():
+    """
+    Integration test: Compare SymphonyScanner+ComposerStrategy ticker selections to composer-tickers.csv ground truth.
+    Only compare dates where both parser and ground truth have output.
+    """
+    # Prepare scanner and run analysis
+    scanner = SymphonyScanner('symphony.json')
+    results = scanner.run_complete_analysis()
+    parser_selections = {sel['date']: set(sel['selected_tickers'].keys()) for sel in results['daily_selections']}
+
+    # Load ground truth
+    import pandas as pd
+    gt = pd.read_csv('composer-tickers.csv')
+    gt['Date'] = pd.to_datetime(gt['Date'])
+    gt = gt.set_index('Date')
+    gt_tickers = [col for col in gt.columns if col not in ('Date', 'Day Traded', '$USD')]
+
+    # Build ground truth selection dict: {date: set of tickers}
+    gt_selection = {}
+    for date, row in gt.iterrows():
+        tickers = set()
+        for t in gt_tickers:
+            val = row[t]
+            if isinstance(val, str) and '%' in val and float(val.replace('%','')) > 0:
+                tickers.add(t)
+        if tickers:
+            gt_selection[pd.to_datetime(date).strftime('%Y-%m-%d')] = tickers
+
+    # Only compare dates present in both parser output and ground truth
+    common_dates = set(parser_selections.keys()) & set(gt_selection.keys())
+    mismatches = []
+    for date in sorted(common_dates):
+        parser_tickers = parser_selections.get(date, set())
+        gt_tickers_set = gt_selection.get(date, set())
+        if parser_tickers != gt_tickers_set:
+            mismatches.append((date, parser_tickers, gt_tickers_set))
+
+    if mismatches:
+        for date, parser, truth in mismatches[:10]:
+            logging.error(f"Mismatch on {date}: parser={parser}, truth={truth}")
+    assert not mismatches, f"Ticker selection mismatches found: {len(mismatches)} (see log for details)"
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-cov lint format clean build docs run-backtest
+.PHONY: help install install-dev test test-cov lint format clean build docs
 
 # Default target
 help:
@@ -12,7 +12,6 @@ help:
 	@echo "  clean        - Clean build artifacts"
 	@echo "  build        - Build package"
 	@echo "  docs         - Build documentation"
-	@echo "  run-backtest - Run the backtester"
 
 # Installation
 install:
@@ -27,16 +26,16 @@ test:
 	pytest tests/ -v
 
 test-cov:
-	pytest tests/ --cov=composer_parser --cov=backtester --cov-report=html --cov-report=term-missing
+	pytest tests/ --cov=composer_parser --cov-report=html --cov-report=term-missing
 
 # Code quality
 lint:
-	flake8 composer_parser.py backtester.py tests/
-	mypy composer_parser.py backtester.py
+	flake8 composer_parser/ tests/
+	mypy composer_parser/
 
 format:
-	black composer_parser.py backtester.py tests/
-	isort composer_parser.py backtester.py tests/
+	black composer_parser/ tests/
+	isort composer_parser/ tests/
 
 # Setup pre-commit hooks
 setup-hooks:
@@ -61,10 +60,6 @@ build: clean
 docs:
 	@echo "Documentation is in README.md"
 	@echo "Run 'make help' to see available commands"
-
-# Running the backtester
-run-backtest:
-	python backtester.py
 
 # Development workflow
 dev-setup: install-dev setup-hooks

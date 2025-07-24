@@ -11,6 +11,8 @@ import pandas_ta as ta
 from typing import Dict, List, Set, Tuple, Union
 from .lisp_parser import parse_symphony_file
 from .composer_parser import ComposerStrategy
+import logging
+logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
 
 class SymphonyScanner:
@@ -44,25 +46,25 @@ class SymphonyScanner:
         Returns:
             Tuple[Set[str], Dict]: (tickers, indicators)
         """
-        print("🔍 Scanning symphony.json...")
+        logging.info("Scanning symphony.json...")
         
         try:
             symphony = parse_symphony_file(self.symphony_file_path)
-            print("✅ Symphony parsed successfully")
+            logging.info("Symphony parsed successfully")
             
             # Extract tickers and indicators
             self.all_tickers = self._extract_all_tickers(symphony)
             self.all_indicators = self._extract_all_indicators(symphony)
             
-            print(f"📊 Found {len(self.all_tickers)} tickers: {sorted(self.all_tickers)}")
-            print(f"📈 Found {len(self.all_indicators)} indicator types:")
+            logging.info(f"Found {len(self.all_tickers)} tickers: {sorted(self.all_tickers)}")
+            logging.info(f"Found {len(self.all_indicators)} indicator types:")
             for key, params in self.all_indicators.items():
-                print(f"   - {key}: {params}")
+                logging.info(f"   - {key}: {params}")
             
             return self.all_tickers, self.all_indicators
             
         except Exception as e:
-            print(f"❌ Error scanning symphony: {e}")
+            logging.error(f"Error scanning symphony: {e}")
             raise
     
     def _extract_all_tickers(self, symphony: List) -> Set[str]:
@@ -136,12 +138,11 @@ class SymphonyScanner:
         Args:
             start_date (str, optional): Start date for data download. If None, downloads from earliest available.
             end_date (str, optional): End date for data download. If None, downloads to latest available.
-            
         Returns:
             Dict[str, pd.DataFrame]: Market data for each ticker
         """
         if not self.all_tickers:
-            print("⚠️  No tickers found to download")
+            logging.warning("No tickers found to download")
             return {}
         
         # Set default dates to get maximum available data
@@ -150,12 +151,12 @@ class SymphonyScanner:
         if end_date is None:
             end_date = '2024-12-31'    # Current date
         
-        print(f"📥 Downloading maximum available market data for {len(self.all_tickers)} tickers...")
-        print(f"   Download period: {start_date} to {end_date}")
+        logging.info(f"Downloading maximum available market data for {len(self.all_tickers)} tickers...")
+        logging.info(f"   Download period: {start_date} to {end_date}")
         
         # Download maximum available data using yfinance
         tickers_list = list(self.all_tickers)
-        data = yf.download(tickers_list, start=start_date, end=end_date, group_by='ticker')
+        data = yf.download(tickers_list, start=start_date, end=end_date, group_by='ticker', auto_adjust=True)
         
         # Convert to the expected format
         market_data = {}
@@ -166,22 +167,21 @@ class SymphonyScanner:
                 if ticker in data.columns.get_level_values(0):
                     ticker_data = data[ticker]
                 else:
-                    print(f"⚠️  Warning: No data found for {ticker}")
+                    logging.warning(f"No data found for {ticker}")
                     ticker_data = pd.DataFrame()
             
             # Keep all data for indicator calculation, but mark the analysis period
             market_data[ticker] = ticker_data
         
         self.market_data = market_data
-        print(f"✅ Downloaded data for {len(market_data)} tickers")
+        logging.info(f"Downloaded data for {len(market_data)} tickers")
         
         # Print data summary
         for ticker, df in market_data.items():
             if not df.empty:
-                print(f"   {ticker}: {df.shape[0]} days, {df.shape[1]} columns")
+                logging.info(f"   {ticker}: {df.shape[0]} days, {df.shape[1]} columns")
             else:
-                print(f"   {ticker}: No data")
-                
+                logging.warning(f"   {ticker}: No data")
         return market_data
     
     def determine_max_analysis_length(self) -> Tuple[str, str]:
@@ -192,7 +192,7 @@ class SymphonyScanner:
             Tuple[str, str]: (start_date, end_date) for maximum analysis period
         """
         if not self.market_data:
-            print("⚠️  No market data available. Run download_market_data first.")
+            logging.warning("No market data available. Run download_market_data first.")
             return None, None
         
         # Find the earliest and latest dates across all tickers
@@ -205,7 +205,7 @@ class SymphonyScanner:
                 latest_dates.append(df.index.max())
         
         if not earliest_dates or not latest_dates:
-            print("⚠️  No valid data found in market_data")
+            logging.warning("No valid data found in market_data")
             return None, None
         
         # Get the latest earliest date and earliest latest date (intersection)
@@ -230,18 +230,18 @@ class SymphonyScanner:
         
         # Ensure we have enough data
         if analysis_start >= analysis_end:
-            print(f"⚠️  Insufficient data for analysis. Need at least {required_warmup} days of warmup.")
+            logging.warning(f"Insufficient data for analysis. Need at least {required_warmup} days of warmup.")
             return None, None
         
         start_date_str = analysis_start.strftime('%Y-%m-%d')
         end_date_str = analysis_end.strftime('%Y-%m-%d')
         
-        print(f"📊 Maximum analysis period determined:")
-        print(f"   Data available: {global_earliest.strftime('%Y-%m-%d')} to {global_latest.strftime('%Y-%m-%d')}")
-        print(f"   Max indicator window: {max_window} days")
-        print(f"   Required warmup: {required_warmup} days")
-        print(f"   Analysis period: {start_date_str} to {end_date_str}")
-        print(f"   Total analysis days: {(analysis_end - analysis_start).days} days")
+        logging.info(f"Maximum analysis period determined:")
+        logging.info(f"   Data available: {global_earliest.strftime('%Y-%m-%d')} to {global_latest.strftime('%Y-%m-%d')}")
+        logging.info(f"   Max indicator window: {max_window} days")
+        logging.info(f"   Required warmup: {required_warmup} days")
+        logging.info(f"   Analysis period: {start_date_str} to {end_date_str}")
+        logging.info(f"   Total analysis days: {(analysis_end - analysis_start).days} days")
         
         return start_date_str, end_date_str
     
@@ -252,7 +252,7 @@ class SymphonyScanner:
         Returns:
             Dict[str, pd.DataFrame]: Market data with indicators added
         """
-        print("🧮 Calculating technical indicators for ALL tickers...")
+        logging.info("Calculating technical indicators for ALL tickers...")
         
         # Get all unique indicator parameters
         all_rsi_windows = set()
@@ -264,15 +264,15 @@ class SymphonyScanner:
             elif params['type'] == 'ma':
                 all_ma_windows.add(params['window'])
         
-        print(f"   RSI windows: {sorted(all_rsi_windows)}")
-        print(f"   MA windows: {sorted(all_ma_windows)}")
+        logging.info(f"   RSI windows: {sorted(all_rsi_windows)}")
+        logging.info(f"   MA windows: {sorted(all_ma_windows)}")
         
         # Calculate indicators for each ticker
         for ticker, df in self.market_data.items():
             if df.empty:
                 continue
                 
-            print(f"   Calculating indicators for {ticker}...")
+            logging.info(f"   Calculating indicators for {ticker}...")
             
             # Calculate RSI for all windows
             for window in all_rsi_windows:
@@ -292,7 +292,7 @@ class SymphonyScanner:
             
             self.market_data[ticker] = df
             
-        print("✅ All indicators calculated")
+        logging.info("All indicators calculated")
         return self.market_data
     
     def create_strategy_evaluator(self) -> ComposerStrategy:
@@ -302,7 +302,7 @@ class SymphonyScanner:
         Returns:
             ComposerStrategy: Strategy evaluator
         """
-        print("🎯 Creating strategy evaluator...")
+        logging.info("Creating strategy evaluator...")
         
         # Parse the symphony file
         symphony = parse_symphony_file(self.symphony_file_path)
@@ -324,17 +324,17 @@ class SymphonyScanner:
             strategy_logic  # strategy logic
         ]
         
-        print("DEBUG: Symphony structure type:", type(symphony_json))
-        print("DEBUG: Symphony length:", len(symphony_json))
-        print("DEBUG: First element:", symphony_json[0])
-        print("DEBUG: Second element:", symphony_json[1])
-        print("DEBUG: Third element type:", type(symphony_json[2]))
-        print("DEBUG: Found strategy logic at index 10:", symphony_json[2][0])
-        print("DEBUG: Fixed symphony structure:", [type(item) for item in symphony_json])
+        logging.debug("Symphony structure type:", type(symphony_json))
+        logging.debug("Symphony length:", len(symphony_json))
+        logging.debug("First element:", symphony_json[0])
+        logging.debug("Second element:", symphony_json[1])
+        logging.debug("Third element type:", type(symphony_json[2]))
+        logging.debug("Found strategy logic at index 10:", symphony_json[2][0])
+        logging.debug("Fixed symphony structure:", [type(item) for item in symphony_json])
         
         # Create the strategy evaluator
         strategy = ComposerStrategy(symphony_json, self.market_data)
-        print("✅ Strategy evaluator created")
+        logging.info("Strategy evaluator created")
         
         return strategy
     
@@ -350,7 +350,7 @@ class SymphonyScanner:
         Returns:
             List[Dict]: Daily ticker selections
         """
-        print(f"📅 Getting daily ticker selections from {start_date} to {end_date}...")
+        logging.info(f"Getting daily ticker selections from {start_date} to {end_date}...")
         
         # Get common dates across all tickers
         common_dates = None
@@ -362,7 +362,7 @@ class SymphonyScanner:
                     common_dates = common_dates.intersection(df.index)
         
         if common_dates is None or len(common_dates) == 0:
-            print("⚠️  No common dates found across tickers")
+            logging.warning("No common dates found across tickers")
             return []
         
         # Filter to the requested date range
@@ -370,7 +370,7 @@ class SymphonyScanner:
         end_dt = pd.to_datetime(end_date)
         date_range = common_dates[(common_dates >= start_dt) & (common_dates <= end_dt)]
         
-        print(f"   Evaluating {len(date_range)} trading days...")
+        logging.info(f"   Evaluating {len(date_range)} trading days...")
         
         daily_selections = []
         for i, date in enumerate(date_range):
@@ -385,10 +385,10 @@ class SymphonyScanner:
                 })
                 
                 if i < 5:  # Show first 5 days for debugging
-                    print(f"   {date.strftime('%Y-%m-%d')}: {selected_tickers}")
+                    logging.debug(f"   {date.strftime('%Y-%m-%d')}: {selected_tickers}")
                     
             except Exception as e:
-                print(f"   ⚠️  Error on {date.strftime('%Y-%m-%d')}: {e}")
+                logging.warning(f"   ⚠️  Error on {date.strftime('%Y-%m-%d')}: {e}")
                 daily_selections.append({
                     'date': date.strftime('%Y-%m-%d'),
                     'selected_tickers': {},
@@ -396,7 +396,7 @@ class SymphonyScanner:
                     'error': str(e)
                 })
         
-        print(f"✅ Generated {len(daily_selections)} daily selections")
+        logging.info(f"Generated {len(daily_selections)} daily selections")
         return daily_selections
     
     def run_complete_analysis(self, start_date: str = None, end_date: str = None) -> Dict:
@@ -410,7 +410,7 @@ class SymphonyScanner:
         Returns:
             Dict: Complete analysis results
         """
-        print("🚀 Starting complete symphony analysis with maximum data...")
+        logging.info("Starting complete symphony analysis with maximum data...")
         
         # Step 1: Scan symphony
         tickers, indicators = self.scan_symphony()
@@ -425,7 +425,7 @@ class SymphonyScanner:
         if start_date is None or end_date is None:
             start_date, end_date = self.determine_max_analysis_length()
             if start_date is None or end_date is None:
-                print("❌ Failed to determine analysis period")
+                logging.error("Failed to determine analysis period")
                 return {}
         
         # Step 5: Create strategy evaluator
@@ -453,5 +453,5 @@ class SymphonyScanner:
             'total_days_analyzed': len(daily_selections)
         }
         
-        print("✅ Complete analysis finished!")
+        logging.info("Complete analysis finished!")
         return results 
