@@ -35,14 +35,20 @@ class ComposerStrategy:
     def _get_data_for_date(self, symbol: str, date: pd.Timestamp) -> pd.Series:
         """
         Safely retrieves the row of data for a specific symbol and date.
-        Uses `asof` to find the most recent data available on or before the given date.
+        Uses direct indexing to get data for the exact date.
         """
         if symbol not in self.market_data or self.market_data[symbol].empty:
             raise ValueError(f"Market data not available for symbol: {symbol}")
         
-        # Use asof to get the latest data on or before the evaluation date
+        # Try to get data for the exact date first
+        if date in self.market_data[symbol].index:
+            data_for_date = self.market_data[symbol].loc[date]
+            return data_for_date
+        
+        # If exact date not found, use asof to get the most recent data on or before the date
         data_for_date = self.market_data[symbol].asof(date)
-
+        
+        # Check if we got any valid data (ignore NaN indicators)
         if pd.isna(data_for_date).all():
             raise ValueError(f"No data available for {symbol} on or before {date.strftime('%Y-%m-%d')}")
             
@@ -56,15 +62,17 @@ class ComposerStrategy:
             data = self._get_data_for_date(symbol, self.evaluation_date)
             
             if indicator_type == 'rsi':
-                # RSI is stored as 'RSI' in the DataFrame
-                if 'RSI' in data:
-                    return data['RSI']
+                # RSI is stored as 'RSI_{window}' in the DataFrame
+                window = indicator_params.get(':window', 10)  # default to 10
+                rsi_col = f'RSI_{window}'
+                if rsi_col in data:
+                    return data[rsi_col]
                 else:
                     return None
             elif indicator_type == 'moving-average-price':
-                # Moving average is stored as 'MA{window}' in the DataFrame
+                # Moving average is stored as 'MA_{window}' in the DataFrame
                 window = indicator_params.get(':window', 20)  # default to 20
-                ma_col = f'MA{window}'
+                ma_col = f'MA_{window}'
                 if ma_col in data:
                     return data[ma_col]
                 else:
@@ -98,8 +106,20 @@ class ComposerStrategy:
             elif operator == 'moving-average-price':
                 symbol = value_expression[1]
                 params = value_expression[2]
-                window = params.get(':window')
-                ma_column = f'MA{window}'
+                # Handle params as either dict or list
+                if isinstance(params, dict):
+                    window = params.get(':window', 20)  # default to 20
+                elif isinstance(params, list):
+                    # Handle [":window", value] pattern
+                    window = 20  # default
+                    for i in range(len(params) - 1):
+                        if params[i] == ':window':
+                            window = params[i + 1]
+                            break
+                else:
+                    window = 20  # default
+                    
+                ma_column = f'MA_{window}'
                 if ma_column not in self.market_data[symbol].columns:
                      raise ValueError(f"Indicator '{ma_column}' not found for {symbol}. Please calculate it first.")
                 return self._get_data_for_date(symbol, self.evaluation_date)[ma_column]
@@ -107,10 +127,23 @@ class ComposerStrategy:
             elif operator == 'rsi':
                 symbol = value_expression[1]
                 params = value_expression[2]
-                # Assuming RSI is pre-calculated and stored in a column named 'RSI'
-                if 'RSI' not in self.market_data[symbol].columns:
-                    raise ValueError(f"Indicator 'RSI' not found for {symbol}. Please calculate it first.")
-                return self._get_data_for_date(symbol, self.evaluation_date)['RSI']
+                # Handle params as either dict or list
+                if isinstance(params, dict):
+                    window = params.get(':window', 10)  # default to 10
+                elif isinstance(params, list):
+                    # Handle [":window", value] pattern
+                    window = 10  # default
+                    for i in range(len(params) - 1):
+                        if params[i] == ':window':
+                            window = params[i + 1]
+                            break
+                else:
+                    window = 10  # default
+                    
+                rsi_column = f'RSI_{window}'
+                if rsi_column not in self.market_data[symbol].columns:
+                    raise ValueError(f"Indicator '{rsi_column}' not found for {symbol}. Please calculate it first.")
+                return self._get_data_for_date(symbol, self.evaluation_date)[rsi_column]
             
             else:
                 raise ValueError(f"Unknown value operator: {operator}")
@@ -151,65 +184,79 @@ class ComposerStrategy:
             
         operator = expression[0]
         
-
-
         if operator == 'if':
             # Structure: (if condition then_branch else_branch)
             _, condition, then_branch, else_branch = expression
             if self._evaluate_condition(condition):
-                return self._evaluate_expression(then_branch) # Pass the entire branch list
+                return self._evaluate_expression(then_branch)
             else:
-                return self._evaluate_expression(else_branch) # Pass the entire branch list
+                return self._evaluate_expression(else_branch)
 
         elif operator == 'weight-equal':
             # Structure: (weight-equal [branch1] [branch2] ...)
-            # This should distribute weights equally across all branches
+            # Each branch should be evaluated independently
             branches = expression[1:]
             if not branches:
                 return {}
             
-            # Evaluate all branches and collect all assets
-            all_assets = {}
+            # Evaluate each branch and collect results
+            all_results = []
             for branch in branches:
-                branch_portfolio = self._evaluate_expression(branch[0])
-                for asset, weight in branch_portfolio.items():
-                    if asset in all_assets:
-                        all_assets[asset] += weight
-                    else:
-                        all_assets[asset] = weight
+                branch_result = self._evaluate_expression(branch)
+                if branch_result:  # Only add non-empty results
+                    all_results.append(branch_result)
             
-            # Distribute weights equally among all assets
-            if all_assets:
-                equal_weight = 1.0 / len(all_assets)
-                return {asset: equal_weight for asset in all_assets}
+            # If no valid results, return empty
+            if not all_results:
+                return {}
+            
+            # Combine all results and distribute weights equally
+            combined_assets = {}
+            for result in all_results:
+                for asset, weight in result.items():
+                    if asset in combined_assets:
+                        combined_assets[asset] += weight
+                    else:
+                        combined_assets[asset] = weight
+            
+            # Normalize weights to sum to 1.0
+            total_weight = sum(combined_assets.values())
+            if total_weight > 0:
+                return {asset: weight / total_weight for asset, weight in combined_assets.items()}
             
             return {}
-
 
         elif operator == 'weight-specified':
             # Structure: (weight-specified weight1 asset1 weight2 asset2 ...)
             portfolio = {}
+            total_weight = 0
+            
             for i in range(1, len(expression), 2):
-                weight = expression[i]
-                asset_expr = expression[i+1]
-                asset_portfolio = self._evaluate_expression(asset_expr)
-                for asset, _ in asset_portfolio.items():
-                    portfolio[asset] = float(weight)
+                if i + 1 < len(expression):
+                    weight = float(expression[i])
+                    asset_expr = expression[i + 1]
+                    asset_portfolio = self._evaluate_expression(asset_expr)
+                    
+                    for asset, _ in asset_portfolio.items():
+                        portfolio[asset] = weight
+                        total_weight += weight
+            
+            # Normalize weights
+            if total_weight > 0:
+                return {asset: weight / total_weight for asset, weight in portfolio.items()}
+            
             return portfolio
 
         elif operator == 'asset':
-            # Base case: returns the asset itself with a nominal weight of 1.0
-            # The parent expression (e.g., weight-specified) will assign the true weight.
+            # Base case: returns the asset itself with weight 1.0
             return {expression[1]: 1.0}
         
         elif operator == 'group':
-            # A group contains a sub-expression that defines the assets within it.
-            # We evaluate the sub-expression.
-            return self._evaluate_expression(expression[2][0])
+            # A group contains a sub-expression that defines the assets within it
+            return self._evaluate_expression(expression[2])
 
         elif operator == 'filter':
             # Structure: (filter indicator_criteria selection_method asset_list)
-            # Example: (filter (rsi {:window 10}) (select-top 1) [asset1 asset2 ...])
             indicator_criteria = expression[1]
             selection_method = expression[2]
             asset_list = expression[3]
@@ -217,39 +264,28 @@ class ComposerStrategy:
             if not asset_list:
                 return {}
             
-            # Extract the indicator type and parameters
+            # Extract indicator parameters
             if isinstance(indicator_criteria, list) and len(indicator_criteria) >= 2:
-                indicator_type = indicator_criteria[0]  # e.g., 'rsi'
-                # Handle indicator parameters properly
-                if len(indicator_criteria) > 2 and isinstance(indicator_criteria[2], dict):
-                    indicator_params = indicator_criteria[2]  # e.g., {:window 10}
-                else:
-                    indicator_params = {}
+                indicator_type = indicator_criteria[0]
+                indicator_params = indicator_criteria[2] if len(indicator_criteria) > 2 else {}
             else:
-                # Fallback to first asset if indicator criteria is malformed
-                return self._evaluate_expression(asset_list[0])
+                return {}
             
-            # Evaluate the indicator for each asset and collect scores
+            # Evaluate indicator for each asset
             asset_scores = []
             for asset_expr in asset_list:
-                try:
-                    asset_portfolio = self._evaluate_expression(asset_expr)
-                    for asset, weight in asset_portfolio.items():
-                        if weight > 0:  # Only consider assets with positive weight
-                            # Get the indicator value for this asset using the helper method
-                            indicator_value = self._get_indicator_value(asset, indicator_type, indicator_params)
-                            if indicator_value is not None:
-                                asset_scores.append((asset, indicator_value))
-                except Exception as e:
-                    # Skip assets that can't be evaluated
-                    continue
+                asset_portfolio = self._evaluate_expression(asset_expr)
+                for asset, _ in asset_portfolio.items():
+                    indicator_value = self._get_indicator_value(asset, indicator_type, indicator_params)
+                    if indicator_value is not None:
+                        asset_scores.append((asset, indicator_value))
             
             if not asset_scores:
                 return {}
             
-            # Sort by indicator value (descending for select-top, ascending for select-bottom)
+            # Sort and select
             if isinstance(selection_method, list) and len(selection_method) >= 2:
-                method = selection_method[0]  # e.g., 'select-top'
+                method = selection_method[0]
                 count = selection_method[1] if len(selection_method) > 1 else 1
             else:
                 method = 'select-top'
@@ -257,16 +293,11 @@ class ComposerStrategy:
             
             if method == 'select-top':
                 asset_scores.sort(key=lambda x: x[1], reverse=True)
-            elif method == 'select-bottom':
-                asset_scores.sort(key=lambda x: x[1], reverse=False)
             else:
-                # Default to select-top
-                asset_scores.sort(key=lambda x: x[1], reverse=True)
-            
-            # Select the top/bottom assets
-            selected_assets = asset_scores[:count]
+                asset_scores.sort(key=lambda x: x[1], reverse=False)
             
             # Return equal weights for selected assets
+            selected_assets = asset_scores[:count]
             if selected_assets:
                 equal_weight = 1.0 / len(selected_assets)
                 return {asset: equal_weight for asset, _ in selected_assets}
@@ -274,17 +305,13 @@ class ComposerStrategy:
             return {}
 
         else:
-            # This handles cases where an expression is a list containing multiple sub-expressions
-            # or a single sub-expression, a common pattern in the Composer JSON.
+            # Handle lists of expressions
             if isinstance(expression, list):
-                # Check if this is a list of asset expressions (equal-weighted assets)
-                asset_expressions = []
-                for item in expression:
-                    if isinstance(item, list) and len(item) >= 2 and item[0] == 'asset':
-                        asset_expressions.append(item)
+                # Check if this is a list of asset expressions
+                asset_expressions = [item for item in expression if isinstance(item, list) and len(item) >= 2 and item[0] == 'asset']
                 
                 if len(asset_expressions) > 1:
-                    # Multiple asset expressions - treat as equal-weighted
+                    # Multiple assets - equal weight
                     equal_weight = 1.0 / len(asset_expressions)
                     portfolio = {}
                     for asset_expr in asset_expressions:
@@ -293,12 +320,10 @@ class ComposerStrategy:
                             portfolio[asset] = equal_weight
                     return portfolio
                 elif len(expression) == 1 and isinstance(expression[0], list):
-                    # Single sub-expression - recurse into it
+                    # Single sub-expression
                     return self._evaluate_expression(expression[0])
-                else:
-                    raise ValueError(f"Unknown expression structure: {expression}")
-            else:
-                raise ValueError(f"Unknown expression operator: {operator}")
+            
+            raise ValueError(f"Unknown expression operator: {operator}")
 
     def get_target_portfolio(self, date: Union[str, pd.Timestamp]) -> Dict[str, float]:
         """

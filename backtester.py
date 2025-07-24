@@ -17,6 +17,7 @@ import pandas as pd
 import pandas_ta as ta
 import json
 from composer_parser.composer_parser import ComposerStrategy
+from composer_parser.lisp_parser import parse_symphony_file
 from typing import Dict, List, Set
 
 # --- Configuration ---
@@ -237,11 +238,17 @@ def run_backtest():
     """
     # 1. Load Symphony
     try:
-        with open(SYMPHONY_FILE_PATH, 'r') as f:
-            symphony_json = json.load(f)
+        symphony_json = parse_symphony_file(SYMPHONY_FILE_PATH)
+        print(f"✅ Symphony file loaded successfully using Lisp parser.")
+        print(f"DEBUG: Symphony structure type: {type(symphony_json)}")
+        print(f"DEBUG: Symphony length: {len(symphony_json) if isinstance(symphony_json, list) else 'N/A'}")
+        if isinstance(symphony_json, list) and len(symphony_json) > 0:
+            print(f"DEBUG: First element: {symphony_json[0]}")
+            print(f"DEBUG: Second element: {symphony_json[1] if len(symphony_json) > 1 else 'N/A'}")
+            print(f"DEBUG: Third element type: {type(symphony_json[2]) if len(symphony_json) > 2 else 'N/A'}")
     except FileNotFoundError:
         print(f"ERROR: Symphony file not found at '{SYMPHONY_FILE_PATH}'")
-        print("Please create this file with the JSON content from Composer.trade.")
+        print("Please create this file with the Lisp-style content from Composer.trade.")
         # Create a placeholder file with the provided structure
         placeholder_symphony = [
             "defsymphony",
