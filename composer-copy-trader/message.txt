@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+"""
+Symphony Holdings Viewer
+A simple script to select an account and symphony, then display current holdings.
+Uses the Composer MCP server for API communication.
+"""
+
+import json
+import subprocess
+import os
+from dotenv import load_dotenv
+import time
+from typing import List, Dict, Optional
+
+# Load environment variables
+load_dotenv()
+os.environ.update({
+    'COMPOSER_API_KEY': os.getenv('COMPOSER_API_KEY'),
+    'COMPOSER_SECRET_KEY': os.getenv('COMPOSER_SECRET_KEY')
+})
+
+
+class ComposerMCPConnection:
+    def __init__(self):
+        self.process = None
+        self.request_id = 1
+
+    def start(self):
+        """Start the MCP server process"""
+        print("Starting Composer MCP server...")
+        cmd = ["uvx", "composer-trade-mcp"]
+
+        self.process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            env=os.environ
+        )
+
+        # Read the startup messages
+        while True:
+            line = self.process.stderr.readline()
+            if not line:
+                break
+            if "Starting MCP server" in line:
+                break
+
+        # Initialize the connection
+        self._initialize()
+
+    def _initialize(self):
+        """Send initialization request"""
+        init_request = {
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "0.1.0",
+                "capabilities": {
+                    "tools": {}
+                },
+                "clientInfo": {
+                    "name": "symphony-holdings-viewer",
+                    "version": "1.0.0"
+                }
+            },
+            "id": self.request_id
+        }
+        self.request_id += 1
+
+        response = self._send_request(init_request)
+
+        # Send initialized notification
+        initialized = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {}
+        }
+        self.process.stdin.write(json.dumps(initialized) + "\n")
+        self.process.stdin.flush()
+
+    def _send_request(self, request):
+        """Send a request to the MCP server and return the response"""
+        self.process.stdin.write(json.dumps(request) + "\n")
+        self.process.stdin.flush()
+
+        # Read response
+        response_line = self.process.stdout.readline()
+        if response_line:
+            try:
+                return json.loads(response_line)
+            except json.JSONDecodeError as e:
+                print(f"Error parsing response: {e}")
+                print(f"Response line: {response_line}")
+                return {}
+        return {}
+
+    def call_tool(self, tool_name, arguments):
+        """Call a tool on the MCP server"""
+        request = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            },
+            "id": self.request_id
+        }
+        self.request_id += 1
+
+        return self._send_request(request)
+
+    def close(self):
+        """Close the MCP server connection"""
+        if self.process:
+            self.process.terminate()
+            self.process.wait()
+
+
+class HoldingsViewer:
+    def __init__(self):
+        """Initialize the Holdings Viewer with MCP connection"""
+        if not os.getenv('COMPOSER_API_KEY'):
+            raise ValueError("COMPOSER_API_KEY environment variable is required")
+
+        self.mcp_conn = ComposerMCPConnection()
+
+    def get_accounts(self) -> List[Dict]:
+        """Fetch all available accounts using MCP"""
+        print("📁 Fetching accounts...")
+
+        response = self.mcp_conn.call_tool("list_accounts", {})
+
+        if "result" in response and "content" in response["result"]:
+            content = response["result"]["content"][0]["text"]
+            try:
+                accounts_data = json.loads(content)
+                if isinstance(accounts_data, list):
+                    accounts = accounts_data
+                else:
+                    accounts = accounts_data.get("accounts", [])
+
+                # Format accounts for easy display
+                formatted_accounts = []
+                for account in accounts:
+                    account_type = account.get('account_type', 'Unknown').replace('_', ' ').title()
+                    account_number = account.get('account_number', 'Unknown')
+
+                    # Create friendly name
+                    if len(account_number) >= 4:
+                        friendly_name = f"{account_type} (*{account_number[-4:]})"
+                    else:
+                        friendly_name = f"{account_type} ({account_number})"
+
+                    formatted_accounts.append({
+                        'uuid': account.get('account_uuid'),
+                        'name': friendly_name,
+                        'type': account_type,
+                        'broker': account.get('broker', 'Unknown'),
+                        'raw': account
+                    })
+
+                return formatted_accounts
+
+            except json.JSONDecodeError as e:
+                print(f"Error parsing accounts response: {e}")
+                return []
+        else:
+            print("Could not fetch accounts.")
+            if "error" in response:
+                print(f"Error: {response['error']}")
+            return []
+
+    def list_available_tools(self):
+        """List all available tools from the MCP server for debugging"""
+        print("Querying MCP server for available tools...")
+
+        request = {
+            "jsonrpc": "2.0",
+            "method": "tools/list",
+            "params": {},
+            "id": self.mcp_conn.request_id
+        }
+        self.mcp_conn.request_id += 1
+
+        response = self.mcp_conn._send_request(request)
+
+        if response and "result" in response:
+            tools = response["result"].get("tools", [])
+            print(f"\nFound {len(tools)} available tools:")
+            print("=" * 60)
+
+            for tool in tools:
+                name = tool.get("name", "Unknown")
+                description = tool.get("description", "No description available")
+                print(f"  {name}")
+                print(f"     {description}")
+                print()
+
+            return tools
+        else:
+            print("Could not retrieve tools list from MCP server")
+            if response and "error" in response:
+                print(f"Error: {response['error']}")
+            return []
+
+    def get_symphonies(self, account_uuid: str) -> List[Dict]:
+        """Fetch all symphonies for a given account using MCP"""
+        print(f"🎵 Fetching symphonies for account...")
+
+        # Try the correct tool name based on composer_daily_gains.py
+        response = self.mcp_conn.call_tool("get_aggregate_symphony_stats", {
+            "account_uuid": account_uuid
+        })
+
+        if "result" in response and "content" in response["result"]:
+            content = response["result"]["content"][0]["text"]
+            print(f"Debug - Response content: {content[:200]}..." if content else "Debug - Empty content")
+
+            if not content.strip():
+                print("Empty response from symphonies API")
+                return []
+
+            try:
+                data = json.loads(content)
+                symphonies = data.get('symphonies', [])
+
+                if not symphonies:
+                    print("No symphonies found in response")
+                    print(f"Full response data keys: {list(data.keys())}")
+                    return []
+
+                # Format symphonies for display
+                formatted_symphonies = []
+                for symphony in symphonies:
+                    formatted_symphonies.append({
+                        'id': symphony.get('id'),
+                        'name': symphony.get('name', 'Unnamed Symphony'),
+                        'value': symphony.get('value', 0),
+                        'simple_return': symphony.get('simple_return', 0),
+                        'holdings_count': len(symphony.get('holdings', [])),
+                        'raw': symphony
+                    })
+
+                return formatted_symphonies
+
+            except json.JSONDecodeError as e:
+                print(f"Error parsing symphonies response: {e}")
+                print(f"Raw content: {repr(content)}")
+                return []
+        else:
+            print("Could not fetch symphonies.")
+            if "error" in response:
+                print(f"Error: {response['error']}")
+            else:
+                print(f"Response structure: {response}")
+            return []
+
+    def get_current_holdings_with_values(self, account_uuid: str, symphony_id: str) -> tuple:
+        """Get current holdings with values from symphony stats (reusing the data we already have)"""
+        # We don't need a separate call - the holdings are already in the symphony data
+        # This method exists for compatibility but we'll get the data from symphony_data directly
+        return [], 0
+
+    def display_holdings(self, symphony_data: Dict, account_uuid: str):
+        """Display holdings for a selected symphony"""
+        symphony_info = symphony_data['raw']
+
+        print("\n" + "=" * 80)
+        print(f"HOLDINGS FOR: {symphony_data['name']}")
+        print("=" * 80)
+
+        # Display symphony summary
+        print(f"Symphony ID: {symphony_data['id']}")
+        print(f"Total Value: ${symphony_info.get('value', 0):,.2f}")
+        print(f"Cash: ${symphony_info.get('cash', 0):,.2f}")
+        print(f"Simple Return: {symphony_info.get('simple_return', 0):.2%}")
+        print(f"Time-Weighted Return: {symphony_info.get('time_weighted_return', 0):.2%}")
+        print(f"Last Rebalance: {symphony_info.get('last_rebalance_on', 'N/A')}")
+
+        # Get holdings directly from the symphony data we already fetched
+        holdings_data = symphony_info.get('holdings', [])
+        total_value = symphony_info.get('value', 0)
+        cash = symphony_info.get('cash', 0)
+
+        # Add cash as a separate holding if it exists
+        if cash > 0:
+            holdings_data = holdings_data.copy()  # Don't modify the original
+            holdings_data.append({
+                "ticker": "CASH",
+                "value": cash,
+                "allocation": cash / (total_value + cash) if (total_value + cash) > 0 else 0,
+                "amount": cash,
+                "price": 1.0,
+                "last_percent_change": 0.0
+            })
+
+        if not holdings_data:
+            print("\n❌ No holdings found for this symphony.")
+            return
+
+        print(f"Total Holdings: {len(holdings_data)}")
+
+        print(f"\n📈 CURRENT HOLDINGS:")
+        print("-" * 80)
+        print(f"{'Ticker':<12} {'Allocation':<12} {'Amount':<12} {'Value':<15} {'Price':<12} {'Change %':<12}")
+        print("-" * 80)
+
+        calculated_total = 0
+
+        # Sort holdings by value (largest first)
+        sorted_holdings = sorted(holdings_data, key=lambda x: x.get('value', 0), reverse=True)
+
+        for holding in sorted_holdings:
+            ticker = holding.get('ticker', 'N/A')
+            allocation = holding.get('allocation', 0)
+            amount = holding.get('amount', 0)
+            value = holding.get('value', 0)
+            price = holding.get('price', 0)
+            change_pct = holding.get('last_percent_change', 0)
+
+            calculated_total += value
+
+            # Format the change percentage with color indicator
+            if ticker == "CASH":
+                change_indicator = "💰"
+                change_display = "N/A"
+            else:
+                change_indicator = "📈" if change_pct > 0 else "📉" if change_pct < 0 else "➖"
+                change_display = f"{change_pct:>+6.2f}%"
+
+            # Display format adjustments for cash vs securities
+            if ticker == "CASH":
+                print(
+                    f"{ticker:<12} {allocation * 100:>8.2f}%   {'N/A':<12}   ${value:>12.2f}   {'N/A':<12}   {change_indicator}")
+            else:
+                print(
+                    f"{ticker:<12} {allocation * 100:>8.2f}%   {amount:>8.4f}   ${value:>12.2f}   ${price:>8.2f}   {change_indicator}{change_display}")
+
+        print("-" * 80)
+        print(f"{'TOTAL':<12} {'100.00%':<12} {'':<12} ${calculated_total:>12.2f}")
+
+        # Additional symphony info
+        print(f"\n📊 ADDITIONAL INFO:")
+        print(f"Asset Classes: {', '.join(symphony_info.get('asset_classes', []))}")
+        print(f"Rebalance Frequency: {symphony_info.get('rebalance_frequency', 'N/A')}")
+        print(f"Tags: {', '.join(symphony_info.get('tags', []))}")
+
+        if symphony_info.get('description'):
+            print(f"Description: {symphony_info['description']}")
+
+        # Show top holdings summary
+        if len(sorted_holdings) > 0:
+            print(f"\n🏆 TOP HOLDINGS:")
+            for i, holding in enumerate(sorted_holdings[:3]):
+                ticker = holding.get('ticker', 'Unknown')
+                value = holding.get('value', 0)
+                weight_pct = holding.get('allocation', 0) * 100
+                print(f"  {i + 1}. {ticker}: {weight_pct:.1f}% (${value:,.2f})")
+
+    def select_from_list(self, items: List[Dict], item_type: str, display_key: str = 'name') -> Optional[Dict]:
+        """Generic function to select an item from a list"""
+        if not items:
+            print(f"❌ No {item_type}s available.")
+            return None
+
+        print(f"\n📋 Available {item_type}s:")
+        print("-" * 60)
+
+        for i, item in enumerate(items, 1):
+            display_name = item.get(display_key, 'Unknown')
+
+            # Add extra info based on item type
+            if item_type == 'account':
+                extra_info = f" ({item.get('broker', 'Unknown')})"
+            elif item_type == 'symphony':
+                extra_info = f" - ${item.get('value', 0):,.2f} ({item.get('holdings_count', 0)} holdings)"
+            else:
+                extra_info = ""
+
+            print(f"  {i}. {display_name}{extra_info}")
+
+        print("-" * 60)
+
+        while True:
+            try:
+                choice = input(f"Select {item_type} (1-{len(items)}) or 'q' to quit: ").strip()
+
+                if choice.lower() == 'q':
+                    return None
+
+                choice_num = int(choice)
+                if 1 <= choice_num <= len(items):
+                    return items[choice_num - 1]
+                else:
+                    print(f"❌ Please enter a number between 1 and {len(items)}")
+
+            except ValueError:
+                print("❌ Please enter a valid number or 'q' to quit")
+
+    def run(self, debug_tools=False):
+        """Main execution flow"""
+        print("🎼 Symphony Holdings Viewer")
+        print("=" * 40)
+
+        try:
+            # Start MCP connection
+            self.mcp_conn.start()
+            time.sleep(1)  # Give server time to start
+
+            # Debug option to list available tools
+            if debug_tools:
+                print("\n🔧 Debug: Listing available MCP tools...")
+                self.list_available_tools()
+                print("\nContinuing with normal execution...\n")
+
+            # Step 1: Get and select account
+            accounts = self.get_accounts()
+
+            selected_account = self.select_from_list(accounts, 'account')
+            if not selected_account:
+                print("👋 Exiting...")
+                return
+
+            print(f"\n✅ Selected: {selected_account['name']}")
+
+            # Step 2: Get and select symphony
+            symphonies = self.get_symphonies(selected_account['uuid'])
+
+            selected_symphony = self.select_from_list(symphonies, 'symphony')
+            if not selected_symphony:
+                print("👋 Exiting...")
+                return
+
+            print(f"\n✅ Selected: {selected_symphony['name']}")
+
+            # Step 3: Display holdings
+            self.display_holdings(selected_symphony, selected_account['uuid'])
+
+            # Option to view another symphony
+            while True:
+                choice = input("\n🔄 View another symphony? (y/n): ").strip().lower()
+                if choice == 'y':
+                    another_symphony = self.select_from_list(symphonies, 'symphony')
+                    if another_symphony:
+                        self.display_holdings(another_symphony, selected_account['uuid'])
+                    else:
+                        break
+                elif choice == 'n':
+                    break
+                else:
+                    print("Please enter 'y' or 'n'")
+
+            print("\n👋 Thank you for using Symphony Holdings Viewer!")
+
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            print("\nClosing MCP connection...")
+            self.mcp_conn.close()
+
+
+def main():
+    """Entry point for the script"""
+    import sys
+
+    # Check for debug flag
+    debug_tools = '--debug-tools' in sys.argv
+
+    try:
+        viewer = HoldingsViewer()
+        viewer.run(debug_tools=debug_tools)
+
+    except ValueError as e:
+        print(f"❌ Configuration Error: {e}")
+        print("\n💡 To fix this:")
+        print("   1. Set environment variables:")
+        print("      export COMPOSER_API_KEY='your_api_key_here'")
+        print("      export COMPOSER_SECRET_KEY='your_secret_key_here'")
+        print("   2. Install uvx: pip install uvx")
+        print("   3. Install the MCP server: uvx install composer-trade-mcp")
+        print("\n💡 Usage:")
+        print("   python holdings_viewer.py --debug-tools  (to see available MCP tools)")
+
+    except KeyboardInterrupt:
+        print("\n\n👋 Script interrupted by user. Goodbye!")
+
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+
+
+if __name__ == "__main__":
+    main()
