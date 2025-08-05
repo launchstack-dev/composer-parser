@@ -10,6 +10,9 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import logging
+from datetime import date
+import pandas as pd
 from composer_parser import ComposerAPI, quick_analysis, get_daily_selections
 
 
@@ -84,6 +87,53 @@ def example_integration():
         print()
 
 
+def debug_today_decision():
+    """Debug and print the decision path for today's selection."""
+    logging.info("\n=== Debug Today's Decision ===")
+    today = date.today().strftime('%Y-%m-%d')
+    api = ComposerAPI('symphony.json')
+    api.load_strategy()
+    selection = api.get_daily_selection(today)
+    logging.info(f"Today's date: {today}")
+    logging.info(f"Today's selection: {selection}")
+
+    # Print last available date in SPY DataFrame
+    try:
+        spy_df = api.get_market_data('SPY')
+        last_date = spy_df.index[-1]
+        logging.info(f"SPY last available date in DataFrame: {last_date}")
+        logging.info(f"SPY DataFrame index dtype: {spy_df.index.dtype}")
+    except Exception as e:
+        logging.info(f"Could not get SPY DataFrame: {e}")
+
+    # Print regime and indicator data for key tickers
+    tickers = ['SPY', 'TQQQ', 'SQQQ', 'XLK', 'TECL', 'BIL', 'UPRO', 'TLT']
+    for ticker in tickers:
+        try:
+            df = api.get_market_data(ticker)
+            row = df.loc[pd.to_datetime(today)]
+            logging.info(f"\n{ticker}:")
+            for col in row.index:
+                if 'MA_' in col or 'RSI_' in col or col in ['Close', 'current_price']:
+                    logging.info(f"  {col}: {row[col]}")
+        except Exception as e:
+            logging.info(f"  {ticker}: No data for today ({e})")
+
+    # Print regime logic (SPY > MA_200, etc.)
+    try:
+        spy = api.get_market_data('SPY').loc[pd.to_datetime(today)]
+        spy_close = spy['Close']
+        spy_ma200 = spy.get('MA_200', float('nan'))
+        spy_rsi10 = spy.get('RSI_10', float('nan'))
+        logging.info(f"\nRegime checks:")
+        logging.info(f"  SPY Close: {spy_close}")
+        logging.info(f"  SPY MA_200: {spy_ma200}")
+        logging.info(f"  SPY > MA_200: {spy_close > spy_ma200 if not pd.isna(spy_ma200) else 'N/A'}")
+        logging.info(f"  SPY RSI_10: {spy_rsi10}")
+    except Exception as e:
+        logging.info(f"  Regime data unavailable: {e}")
+
+
 if __name__ == "__main__":
     print("Composer Parser API Examples")
     print("=" * 50)
@@ -92,7 +142,7 @@ if __name__ == "__main__":
         example_basic_usage()
         example_quick_functions()
         example_integration()
-        
+        debug_today_decision()
         print("\n✅ All examples completed successfully!")
         
     except Exception as e:

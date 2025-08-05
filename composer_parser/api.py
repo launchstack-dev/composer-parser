@@ -3,12 +3,13 @@ Composer Parser API
 
 High-level API for easy integration of the Composer Parser into other trading applications.
 Provides simple, clean interfaces for common operations.
+Supports both Composer LISP format and Quantmage JSON format.
 """
 
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from .symphony_scanner import SymphonyScanner
-from .composer_parser import ComposerStrategy
+from .composer_parser import ComposerStrategy, parse_strategy_file, parse_strategy_json
 
 
 class ComposerAPI:
@@ -29,22 +30,36 @@ class ComposerAPI:
         self.scanner = SymphonyScanner(symphony_file_path)
         self._strategy = None
         self._market_data = None
+        self._loaded_target_date = None
     
     def load_strategy(self, start_date: Optional[str] = None, 
                      end_date: Optional[str] = None,
-                     market_data: Optional[Dict[str, pd.DataFrame]] = None) -> Dict:
+                     market_data: Optional[Dict[str, pd.DataFrame]] = None,
+                     target_date: Optional[str] = None) -> Dict:
         """
         Load and prepare the trading strategy with market data.
+        If target_date is provided, only download enough data for the required indicators and warmup up to that date.
         
         Args:
             start_date (str, optional): Start date for data download
             end_date (str, optional): End date for data download
             market_data (Optional[Dict[str, pd.DataFrame]]): Preloaded market data to use instead of downloading.
+            target_date (str, optional): If provided, only download enough data for this date.
         Returns:
             Dict: Strategy information including tickers and indicators
         """
         # Scan symphony to get tickers and indicators
         tickers, indicators = self.scanner.scan_symphony()
+        
+        if target_date is not None:
+            # Determine max window and warmup
+            max_window = 0
+            for params in self.scanner.all_indicators.values():
+                max_window = max(max_window, params['window'])
+            warmup_buffer = 100
+            start_date = (pd.to_datetime(target_date) - pd.Timedelta(days=max_window + warmup_buffer)).strftime('%Y-%m-%d')
+            end_date = target_date
+            self._loaded_target_date = target_date
         
         if market_data is not None:
             self._market_data = market_data
@@ -65,17 +80,15 @@ class ComposerAPI:
     
     def get_daily_selection(self, date: str) -> Dict[str, float]:
         """
-        Get the ticker selection for a specific date.
+        Get the ticker selection for a specific date. If not already loaded for this date, load only the required data window.
         
         Args:
             date (str): Date in 'YYYY-MM-DD' format
-            
         Returns:
             Dict[str, float]: Ticker weights for the date
         """
-        if self._strategy is None:
-            raise ValueError("Strategy not loaded. Call load_strategy() first.")
-        
+        if self._strategy is None or self._loaded_target_date != date:
+            self.load_strategy(target_date=date)
         return self._strategy.get_target_portfolio(date)
     
     def get_selections_for_period(self, start_date: str, end_date: str) -> List[Dict]:

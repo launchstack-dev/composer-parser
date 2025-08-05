@@ -1,16 +1,16 @@
 """
 Symphony Scanner Module
 
-This module provides functionality to scan, parse, and analyze Lisp-style symphony files
+This module provides functionality to scan, parse, and analyze trading strategy files
 for trading strategies. It handles data downloading, indicator calculation, and strategy evaluation.
+Supports both Composer LISP format and Quantmage JSON format.
 """
 
 import pandas as pd
 import yfinance as yf
 import pandas_ta as ta
 from typing import Dict, List, Set, Tuple, Union
-from .lisp_parser import parse_symphony_file
-from .composer_parser import ComposerStrategy
+from .composer_parser import ComposerStrategy, parse_strategy_file
 import logging
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
@@ -41,16 +41,17 @@ class SymphonyScanner:
     
     def scan_symphony(self) -> Tuple[Set[str], Dict]:
         """
-        Scan the symphony file to extract tickers and indicators.
+        Scan the strategy file to extract tickers and indicators.
+        Supports both Composer LISP format and Quantmage JSON format.
         
         Returns:
             Tuple[Set[str], Dict]: (tickers, indicators)
         """
-        logging.info("Scanning symphony.json...")
+        logging.info(f"Scanning {self.symphony_file_path}...")
         
         try:
-            symphony = parse_symphony_file(self.symphony_file_path)
-            logging.info("Symphony parsed successfully")
+            symphony = parse_strategy_file(self.symphony_file_path)
+            logging.info("Strategy parsed successfully")
             
             # Extract tickers and indicators
             self.all_tickers = self._extract_all_tickers(symphony)
@@ -64,7 +65,7 @@ class SymphonyScanner:
             return self.all_tickers, self.all_indicators
             
         except Exception as e:
-            logging.error(f"Error scanning symphony: {e}")
+            logging.error(f"Error scanning strategy file: {e}")
             raise
     
     def _extract_all_tickers(self, symphony: List) -> Set[str]:

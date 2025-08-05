@@ -1,18 +1,21 @@
 """
 Composer Parser Package
 
-A comprehensive package for parsing and analyzing Lisp-style symphony trading strategy files.
+A comprehensive package for parsing and analyzing trading strategy files.
+Supports both Composer LISP format and Quantmage JSON format.
 Provides functionality for data downloading, indicator calculation, and strategy evaluation.
 
 Main Components:
-- SymphonyScanner: Main class for scanning and analyzing symphony files
+- SymphonyScanner: Main class for scanning and analyzing strategy files
 - ComposerStrategy: Strategy evaluator for making ticker selections
 - LispParser: Parser for Lisp-style syntax in symphony files
+- QuantmageParser: Parser for Quantmage JSON format
 """
 
 from .symphony_scanner import SymphonyScanner
-from .composer_parser import ComposerStrategy
+from .composer_parser import ComposerStrategy, parse_strategy_file, parse_strategy_json
 from .lisp_parser import parse_symphony_file
+from .quantmage_parser import parse_quantmage_file, parse_quantmage_json
 from .api import ComposerAPI, quick_analysis, get_daily_selections, validate_accuracy
 from .version import __version__
 
@@ -20,6 +23,10 @@ __all__ = [
     'SymphonyScanner',
     'ComposerStrategy', 
     'parse_symphony_file',
+    'parse_strategy_file',
+    'parse_strategy_json',
+    'parse_quantmage_file',
+    'parse_quantmage_json',
     'ComposerAPI',
     'quick_analysis',
     'get_daily_selections', 

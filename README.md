@@ -1,6 +1,10 @@
 # Composer Parser
 
-A comprehensive Python package for parsing and analyzing Lisp-style symphony trading strategy files. This package provides functionality for data downloading, indicator calculation, and strategy evaluation with a clean, easy-to-use API.
+A comprehensive Python package for parsing and analyzing trading strategy files. This package provides functionality for data downloading, indicator calculation, and strategy evaluation with a clean, easy-to-use API.
+
+**Supports multiple strategy formats:**
+- ✅ **Composer LISP format** - Traditional Lisp-style symphony files
+- ✅ **Quantmage JSON format** - JSON-based strategy format with incantations and conditions
 
 ## ⚠️ Important Caveats
 
@@ -27,7 +31,10 @@ A comprehensive Python package for parsing and analyzing Lisp-style symphony tra
 
 ## 🚀 Features
 
+- **Multi-Format Parser**: Parse both Composer LISP and Quantmage JSON strategy formats
+- **Automatic Format Detection**: Automatically detects and parses different strategy file formats
 - **Lisp-style Parser**: Parse complex Lisp-style symphony files with nested expressions
+- **Quantmage Parser**: Parse JSON-based strategies with incantations and conditions
 - **Market Data Integration**: Download historical data using yfinance
 - **Technical Indicators**: Calculate RSI, moving averages, and other indicators
 - **Strategy Evaluation**: Evaluate complex trading strategies with proper weight distribution
@@ -87,6 +94,63 @@ selections = get_daily_selections('symphony.json', '2024-01-01', '2024-01-10')
 for selection in selections:
     print(f"{selection['date']}: {selection['selected_tickers']}")
 ```
+
+## 🔄 Quantmage Strategy Support
+
+The parser now supports Quantmage's JSON-based strategy format, which uses "incantations" and "conditions" to define trading logic.
+
+### Parsing Quantmage Strategies
+
+```python
+from composer_parser import parse_strategy_file, parse_strategy_json
+
+# Parse from file (automatically detects format)
+composer_symphony = parse_strategy_file('quantmage-strategy.json')
+
+# Parse from JSON data
+quantmage_data = {
+    "name": "My Quantmage Strategy",
+    "description": "A simple RSI-based strategy",
+    "incantation": {
+        "incantation_type": "IfElse",
+        "condition": {
+            "condition_type": "SingleCondition",
+            "greater_than": True,
+            "lh_indicator": {"type": "RelativeStrengthIndex", "window": 14},
+            "lh_ticker_symbol": "SPY",
+            "rh_value": 70.0,
+            "type": "IndicatorAndNumber"
+        },
+        "then_incantation": {
+            "incantation_type": "Ticker",
+            "symbol": "QQQ",
+            "name": "Invesco QQQ Trust"
+        },
+        "else_incantation": {
+            "incantation_type": "Ticker",
+            "symbol": "BIL",
+            "name": "SPDR Bloomberg 1-3 Month T-Bill ETF"
+        }
+    }
+}
+
+composer_symphony = parse_strategy_json(quantmage_data)
+```
+
+### Supported Quantmage Elements
+
+- **Ticker**: Simple asset selection
+- **IfElse**: Conditional logic with then/else branches
+- **Weighted**: Multiple assets with equal weighting
+- **Filtered**: Asset filtering based on indicators
+- **Conditions**: SingleCondition with various indicators
+- **Indicators**: RSI, Cumulative Return, Volatility, Moving Averages
+
+### Format Detection
+
+The parser automatically detects the file format:
+- Files starting with `{` are treated as Quantmage JSON
+- Files starting with `(` or other characters are treated as Composer LISP
 
 ## 📚 API Reference
 
@@ -307,7 +371,7 @@ This package was developed to provide a robust, production-ready solution for pa
 - **No financial advice** - This software does not provide investment advice
 - **Test thoroughly** - Always test with small amounts before any real trading
 - **Understand the risks** - Trading involves substantial risk of loss
-- **Use at your own risk** - The authors accept no responsibility for financial losses 
+- **Use at your own risk** - The authors accept no responsibility for financial losses
 
 ## ❌ Deprecated: backtester.py
 

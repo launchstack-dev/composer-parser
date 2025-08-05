@@ -7,6 +7,10 @@ JSON format. It translates the LISP-like DSL into an executable trading logic.
 import pandas as pd
 from typing import Dict, List, Any, Union
 import logging
+import json
+from .lisp_parser import parse_symphony_file as parse_lisp_file
+from .quantmage_parser import parse_quantmage_file as parse_quantmage_file, parse_quantmage_json as parse_quantmage_json
+
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
 class ComposerStrategy:
@@ -49,7 +53,7 @@ class ComposerStrategy:
         
         # If exact date not found, use asof to get the most recent data on or before the date
         data_for_date = self.market_data[symbol].asof(date)
-        
+
         # Check if we got any valid data (ignore NaN indicators)
         if pd.isna(data_for_date).all():
             raise ValueError(f"No data available for {symbol} on or before {date.strftime('%Y-%m-%d')}")
@@ -187,7 +191,7 @@ class ComposerStrategy:
             return {}
             
         operator = expression[0]
-        
+
         if operator == 'if':
             # Structure: (if condition then_branch else_branch)
             _, condition, then_branch, else_branch = expression
@@ -239,9 +243,9 @@ class ComposerStrategy:
                 if i + 1 < len(expression):
                     weight = float(expression[i])
                     asset_expr = expression[i + 1]
-                    asset_portfolio = self._evaluate_expression(asset_expr)
+                asset_portfolio = self._evaluate_expression(asset_expr)
                     
-                    for asset, _ in asset_portfolio.items():
+                for asset, _ in asset_portfolio.items():
                         portfolio[asset] = weight
                         total_weight += weight
             
@@ -327,7 +331,7 @@ class ComposerStrategy:
                     # Single sub-expression
                     return self._evaluate_expression(expression[0])
             
-            raise ValueError(f"Unknown expression operator: {operator}")
+                raise ValueError(f"Unknown expression operator: {operator}")
 
     def get_target_portfolio(self, date: Union[str, pd.Timestamp]) -> Dict[str, float]:
         """
@@ -353,3 +357,50 @@ class ComposerStrategy:
             return {asset: weight / total_weight for asset, weight in portfolio.items()}
         
         return portfolio
+
+
+def parse_strategy_file(file_path: str) -> List:
+    """
+    Parse a strategy file and return it in Composer format.
+    Automatically detects the file format (LISP or Quantmage JSON).
+    
+    Args:
+        file_path (str): Path to the strategy file
+        
+    Returns:
+        List: Composer symphony format
+    """
+    try:
+        # Try to parse as JSON first (Quantmage format)
+        with open(file_path, 'r') as f:
+            content = f.read().strip()
+            if content.startswith('{'):
+                # JSON format - Quantmage
+                return parse_quantmage_file(file_path)
+            else:
+                # LISP format - Composer
+                return parse_lisp_file(file_path)
+    except Exception as e:
+        logging.error(f"Error parsing strategy file: {e}")
+        raise
+
+
+def parse_strategy_json(strategy_json: Union[Dict, List]) -> List:
+    """
+    Parse strategy JSON data and return it in Composer format.
+    Automatically detects the format (Quantmage Dict or Composer List).
+    
+    Args:
+        strategy_json (Union[Dict, List]): Strategy data
+        
+    Returns:
+        List: Composer symphony format
+    """
+    if isinstance(strategy_json, dict):
+        # Quantmage format
+        return parse_quantmage_json(strategy_json)
+    elif isinstance(strategy_json, list):
+        # Already in Composer format
+        return strategy_json
+    else:
+        raise ValueError("Invalid strategy JSON format")
